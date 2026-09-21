@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0A0A0D">
+<meta name="description" content="追星消费记账本 · 纯本地离线 · 高级黑色质感">
+<title>追星消费记账本</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="追星账本">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="app-logo">✦</div>
+    <div class="app-title" id="topTitle">追星消费记账本</div>
+    <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
+  </div>
+</header>
+
+<main id="app">
+
+  <!-- ═══════════ 首页：明星档案 ═══════════ -->
+  <section class="view" id="view-home">
+    <div class="page-head">
+      <h2 class="page-title">明星档案</h2>
+      <button class="btn gold sm" id="btnAddIdol">＋ 新增明星</button>
+    </div>
+    <div class="idol-grid" id="idolGrid"></div>
+  </section>
+
+  <!-- ═══════════ 记账页 ═══════════ -->
+  <section class="view hidden" id="view-add">
+    <div class="page-head">
+      <h2 class="page-title" id="addTitle">记一笔</h2>
+      <button class="link-btn" id="btnManageCats">管理分类</button>
+    </div>
+    <div class="form-card glass" id="addFormCard">
+      <label class="field"><span class="field-label">所属明星 *</span><select id="recIdolSelect"></select></label>
+      <div class="field-row">
+        <label class="field grow"><span class="field-label">消费分类 *</span><select id="recCatSelect"></select></label>
+        <button class="btn ghost sm" type="button" id="btnNewCat">＋ 新分类</button>
+      </div>
+      <label class="field"><span class="field-label">消费名称 *</span><input type="text" id="recNameInput" placeholder="如：上海演唱会 980 内场" maxlength="50"></label>
+      <div class="field-row">
+        <label class="field grow"><span class="field-label">价格（¥）*</span><div class="price-wrap"><span class="price-sym">¥</span><input type="number" id="recPriceInput" placeholder="0.00" step="0.01" min="0" inputmode="decimal"></div></label>
+        <label class="field grow"><span class="field-label">消费日期 *</span><input type="date" id="recDateInput"></label>
+      </div>
+      <div class="field">
+        <span class="field-label">图片凭证：小票 / 订单截图 / 实物照（最多 9 张）</span>
+        <div class="img-pick-grid" id="recImgGrid"></div>
+        <input type="file" id="recImgInput" accept="image/*" multiple class="ghost-input">
+        <input type="file" id="recCamInput" accept="image/*" capture="environment" class="ghost-input">
+      </div>
+      <label class="field"><span class="field-label">备注（选填）</span><textarea id="recNoteInput" rows="2" placeholder="想说的话…" maxlength="200"></textarea></label>
+      <button class="btn gold block" id="btnSaveRec">保存账单</button>
+    </div>
+  </section>
+
+  <!-- ═══════════ 统计页 ═══════════ -->
+  <section class="view hidden" id="view-stats">
+    <div class="page-head"><h2 class="page-title">统计</h2></div>
+    <div class="chip-row" id="statModeChips"></div>
+    <div class="chip-row hidden" id="statIdolChips"></div>
+    <div class="chip-row" id="statYearChips"></div>
+    <div id="statBody"></div>
+  </section>
+
+  <!-- ═══════════ 明星详情页 ═══════════ -->
+  <section class="view hidden" id="view-detail">
+    <div class="detail-top">
+      <button class="sheet-back" id="btnDetailBack">‹ 返回</button>
+    </div>
+    <div class="idol-hero glass" id="idolHero"></div>
+    <div class="chip-row small" id="detailCatChips"></div>
+    <div class="list" id="detailRecords"></div>
+  </section>
+</main>
+
+<!-- 底部导航 -->
+<nav class="tabbar glass">
+  <button class="tab active" data-view="home"><span class="tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="#A895FF" aria-hidden="true"><path d="M12 3.2 2.6 11h2.9v9.3h5.2v-5.6h2.6v5.6h5.2V11h2.9z"/></svg></span><span class="tab-txt">首页</span></button>
+  <button class="tab" data-view="add"><span class="tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="#A895FF" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></span><span class="tab-txt">记账</span></button>
+  <button class="tab" data-view="stats"><span class="tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="#A895FF" aria-hidden="true"><path d="M4 20h3.4v-8.5H4V20zm6.3 0h3.4V4h-3.4v16zm6.3 0H20v-12h-3.4v12z"/></svg></span><span class="tab-txt">统计</span></button>
+</nav>
+
+<!-- ═══════════ 明星表单 Sheet ═══════════ -->
+<div class="sheet-backdrop" id="sheetIdolBackdrop">
+  <div class="sheet">
+    <button class="sheet-x" data-close-sheet>✕</button>
+    <div class="sheet-grip"></div>
+    <div class="sheet-title" id="idolSheetTitle">新增明星</div>
+    <div class="avatar-pick" id="idolAvatarPick">
+      <div class="avatar-circle" id="idolAvatarPreview">＋</div>
+      <div class="avatar-hint">点击上传头像</div>
+      <input type="file" id="idolAvatarInput" accept="image/*" class="ghost-input">
+    </div>
+    <label class="field"><span class="field-label">明星昵称 / 名字 *</span><input type="text" id="idolNameInput" placeholder="自定义昵称" maxlength="20"></label>
+    <div class="sheet-btns">
+      <button class="btn ghost" data-close-sheet>取消</button>
+      <button class="btn gold" id="btnSaveIdol">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 分类表单 Sheet（全局） ═══════════ -->
+<div class="sheet-backdrop" id="sheetCatBackdrop">
+  <div class="sheet">
+    <button class="sheet-x" data-close-sheet>✕</button>
+    <div class="sheet-grip"></div>
+    <div class="sheet-title" id="catSheetTitle">新增分类</div>
+    <div class="cat-icon-row" id="catIconRow"></div>
+    <label class="field"><span class="field-label">分类名称 *</span><input type="text" id="catNameInput" placeholder="任意消费项目名称" maxlength="10"></label>
+    <div class="sheet-btns">
+      <button class="btn ghost" data-close-sheet>取消</button>
+      <button class="btn gold" id="btnSaveCat">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 分类管理 Sheet ═══════════ -->
+<div class="sheet-backdrop" id="sheetCatMgrBackdrop">
+  <div class="sheet">
+    <button class="sheet-x" data-close-sheet>✕</button>
+    <div class="sheet-grip"></div>
+    <div class="sheet-title">分类管理</div>
+    <div class="mgr-hint">分类为全局共用，所有明星共享；删除分类不影响已有账单（账单会显示为「其他」）。</div>
+    <div id="catMgrList"></div>
+    <div class="sheet-btns"><button class="btn gold" id="btnMgrAddCat">＋ 新增分类</button></div>
+  </div>
+</div>
+
+<!-- ═══════════ 记录详情 Sheet ═══════════ -->
+<div class="sheet-backdrop" id="sheetRecDetailBackdrop">
+  <div class="sheet sheet-tall">
+    <div class="sheet-head">
+      <button class="sheet-back" data-close-sheet>‹ 返回</button>
+      <span class="sheet-head-title">账单明细</span>
+    </div>
+    <div class="sheet-grip"></div>
+    <div id="recDetailBody"></div>
+  </div>
+</div>
+
+<!-- ═══════════ 设置 Sheet ═══════════ -->
+<div class="sheet-backdrop" id="sheetSettingsBackdrop">
+  <div class="sheet">
+    <button class="sheet-x" data-close-sheet>✕</button>
+    <div class="sheet-grip"></div>
+    <div class="sheet-title">设置</div>
+    <div class="mine-card plain">
+      <div class="mine-avatar" id="settingsAvatar">🌙</div>
+      <div class="mine-info">
+        <input type="text" id="settingsNickname" class="nick-input" placeholder="你的昵称" maxlength="16">
+        <div class="mine-sub">点击头像更换 · 数据仅存本机</div>
+      </div>
+    </div>
+    <input type="file" id="settingsAvatarInput" accept="image/*" class="ghost-input">
+    <div class="menu plain">
+      <button class="menu-item" id="btnSaveProfile">💾 保存资料</button>
+      <button class="menu-item" id="btnExport">📤 导出全部数据（JSON 备份）</button>
+      <button class="menu-item" id="btnInstallGuide">📲 安装到桌面 / 主屏幕</button>
+      <button class="menu-item" id="btnAbout">✦ 关于这个 App</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 删除明星确认 ═══════════ -->
+<div class="modal-backdrop hidden" id="idolDelBackdrop">
+  <div class="modal">
+    <div class="modal-title">删除明星档案</div>
+    <div class="modal-text" id="idolDelText"></div>
+    <div class="modal-col-btns">
+      <button class="btn danger" id="idolDelAll">删除档案 + 全部消费记录</button>
+      <button class="btn ghost" id="idolDelKeep">删除档案，记录保留为「无归属」</button>
+      <button class="btn ghost" id="idolDelCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 通用确认弹窗 ═══════════ -->
+<div class="modal-backdrop hidden" id="confirmBackdrop">
+  <div class="modal">
+    <div class="modal-title" id="confirmTitle">确认</div>
+    <div class="modal-text" id="confirmText"></div>
+    <div class="sheet-btns">
+      <button class="btn ghost" id="confirmNo">取消</button>
+      <button class="btn danger" id="confirmYes">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 安装引导 ═══════════ -->
+<div class="modal-backdrop hidden" id="installBackdrop">
+  <div class="modal">
+    <div class="modal-title">📲 安装到手机 / 桌面</div>
+    <div class="modal-text left" id="installGuideText"></div>
+    <div class="sheet-btns"><button class="btn gold" id="installOk">我知道了</button></div>
+  </div>
+</div>
+
+<!-- ═══════════ 关于 ═══════════ -->
+<div class="modal-backdrop hidden" id="aboutBackdrop">
+  <div class="modal">
+    <div class="modal-title">✦ 追星消费记账本</div>
+    <div class="modal-text left">面向追星人群的本地消费记账 App。<br><br>无需登录、不联网、不付费：明星档案、账单、图片凭证全部保存在你的设备浏览器（IndexedDB）里，离线可用。<br><br>支持多明星档案、全局自定义分类、年度双模式统计图表。<br><br>建议每月在「设置」中导出 JSON 备份 💾</div>
+    <div class="sheet-btns"><button class="btn gold" id="aboutOk">关闭</button></div>
+  </div>
+</div>
+
+<!-- 图片浏览器 -->
+<div class="viewer" id="viewer">
+  <button class="viewer-close" id="viewerClose">✕</button>
+  <div class="viewer-strip" id="viewerStrip"></div>
+  <div class="viewer-dots" id="viewerDots"></div>
+</div>
+
+<!-- 存储空间提醒横幅 -->
+<div class="install-banner hidden" id="quotaBanner">
+  <span>💾 本机存储即将用满，建议导出备份</span>
+  <button class="btn gold sm" id="quotaExport">导出</button>
+  <button class="banner-x" id="quotaClose">✕</button>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
