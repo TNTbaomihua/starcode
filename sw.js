@@ -1,5 +1,5 @@
 /* 追星消费记账本 · Service Worker（cache-first + 版本化更新） */
-const CACHE_VERSION = 'v19';
+const CACHE_VERSION = 'v20';
 const CACHE_NAME = 'star-expense-' + CACHE_VERSION;
 const CORE_ASSETS = [
   './',

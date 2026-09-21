@@ -103,7 +103,7 @@ const state = {
   view: 'home',
   statMode: 'all',       // 'all' | 'single'
   statIdol: null,
-  statYear: 'this',      // 'this' | 'last' | 'YYYY'
+  statYear: 'this',      // 'this' 本年 | 'all' 全部年份（总统计） | 'YYYY'
   detailIdolId: null,
   detailFilterCat: null,
   editingIdolId: null,
@@ -234,12 +234,36 @@ const catById  = id => state.categories.find(x => x.id === id);
 const recsOf   = idolId => state.records.filter(r => r.idolId === idolId);
 const totalOf  = recs => round2(recs.reduce((s, r) => s + (Number(r.price) || 0), 0));
 function yearValue() {
-  if (state.statYear === 'this') return new Date().getFullYear();
-  if (state.statYear === 'last') return new Date().getFullYear() - 1;
   return parseInt(state.statYear, 10) || new Date().getFullYear();
 }
 const recsOfYear = year => state.records.filter(r => String(r.date || '').startsWith(String(year)));
 const monthKey = dateStr => String(dateStr || '').slice(0, 7);
+
+/* —— 统计范围：全部年份（总统计）/ 指定年份 —— */
+const isAllYears = () => state.statYear === 'all';
+function statsRecs() {
+  return isAllYears() ? state.records.slice() : recsOfYear(yearValue());
+}
+function scopeLabel() {
+  return isAllYears() ? '全部年份' : yearValue() + ' 年';
+}
+/* 记录中出現过的年份，倒序 */
+function yearsOf(recs) {
+  const set = new Set();
+  recs.forEach(r => {
+    const y = String(r.date || '').slice(0, 4);
+    if (/^\d{4}$/.test(y)) set.add(y);
+  });
+  return [...set].sort().reverse();
+}
+/* 趋势图数据：全部年份→按年汇总；单年→按月汇总 */
+function trendData(recs) {
+  if (isAllYears()) {
+    const ys = yearsOf(recs).sort();
+    return { labels: ys.map(y => y + '年'), values: ys.map(y => totalOf(recs.filter(r => String(r.date || '').startsWith(y)))) };
+  }
+  return { labels: MONTHS, values: fillMonths(recs) };
+}
 
 /* ────────────── 图片处理（EXIF 方向 + HEIC 检测 + 压缩） ────────────── */
 async function decodeImageFile(file) {
@@ -947,19 +971,20 @@ function renderStats() {
     renderStats();
   }));
 
-  // 年份 chips
+  // 年份 chips：本年 / 全部（总统计）/ 自定义年份
   const yChips = $('#statYearChips');
   yChips.innerHTML =
     `<button class="chip${state.statYear === 'this' ? ' active' : ''}" data-y="this">本年</button>` +
-    `<button class="chip${state.statYear === 'last' ? ' active' : ''}" data-y="last">去年</button>` +
-    (state.statYear !== 'this' && state.statYear !== 'last'
+    `<button class="chip${isAllYears() ? ' active' : ''}" data-y="all">Σ 总统计</button>` +
+    (!isAllYears() && state.statYear !== 'this'
       ? `<button class="chip active" data-y="${state.statYear}">${yearValue()} 年</button>` : '') +
     `<button class="chip" id="chipCustomYear">📅 自定义</button>`;
   $$('#statYearChips .chip[data-y]').forEach(b => b.addEventListener('click', () => {
     state.statYear = b.dataset.y; renderStats();
   }));
   $('#chipCustomYear').addEventListener('click', () => {
-    const yv = prompt('请输入年份（如 2025）：', String(yearValue()));
+    const cur = isAllYears() ? new Date().getFullYear() : yearValue();
+    const yv = prompt('请输入年份（如 2025）：', String(cur));
     if (yv && /^\d{4}$/.test(yv.trim())) { state.statYear = yv.trim(); renderStats(); }
   });
 
@@ -996,10 +1021,10 @@ function fillMonths(recs) {
   return months;
 }
 
-/* —— 视图 A：单个明星年度统计 —— */
+/* —— 视图 A：单个明星统计（年度 / 全部年份） —— */
 function renderSingleStats(body, idol) {
-  const year = yearValue();
-  const recs = recsOfYear(year).filter(r => r.idolId === idol.id)
+  const all = isAllYears();
+  const recs = statsRecs().filter(r => r.idolId === idol.id)
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const total = totalOf(recs);
 
@@ -1008,33 +1033,34 @@ function renderSingleStats(body, idol) {
     return { cat: c, recs: sub, total: totalOf(sub) };
   }).filter(x => x.total > 0);
   const catItems = byCat.map(x => ({ label: x.cat.icon + ' ' + x.cat.name, value: x.total, color: x.cat.color }));
+  const trend = trendData(recs);
 
   body.innerHTML = `
     <div class="stat-hero glass">
-      <div class="lbl">${esc(idol.name)} · ${year} 年度总消费</div>
+      <div class="lbl">${esc(idol.name)} · ${all ? '累计总消费' : yearValue() + ' 年度总消费'}</div>
       <div class="big gold-grad num">${fmtMoney(total)}</div>
-      <div class="lbl">共 ${recs.length} 条账单</div>
+      <div class="lbl">共 ${recs.length} 条账单${all ? ' · 全部年份' : ''}</div>
     </div>
     <div class="chart-card glass"><div class="chart-title">📊 各分类总花费（柱状图）</div><canvas id="chCatBar" data-h="210"></canvas></div>
     <div class="chart-card glass"><div class="chart-title">🥧 分类占比（饼图）</div><canvas id="chCatPie" data-h="200"></canvas>
       <div id="pctList">${pctListHtml(catItems, total)}</div>
     </div>
-    <div class="chart-card glass"><div class="chart-title">📈 月度趋势</div><canvas id="chMonth" data-h="180"></canvas></div>
-    <div class="chart-card glass"><div class="chart-title">🗒️ ${year} 年全部消费流水（${recs.length}）</div>
-      <div id="flowList">${recs.length ? recs.map(r => recItemHtml(r, idol)).join('') : '<div class="empty" style="padding:20px"><div class="dd">该明星本年暂无账单</div></div>'}</div>
+    <div class="chart-card glass"><div class="chart-title">📈 ${all ? '年度趋势' : '月度趋势'}</div><canvas id="chMonth" data-h="180"></canvas></div>
+    <div class="chart-card glass"><div class="chart-title">🗒️ ${all ? '全部年份' : yearValue() + ' 年'}消费流水（${recs.length}）</div>
+      <div id="flowList">${recs.length ? recs.map(r => recItemHtml(r, idol)).join('') : `<div class="empty" style="padding:20px"><div class="dd">${all ? '该明星暂无账单' : '该明星本年暂无账单'}</div></div>`}</div>
     </div>`;
   bindFlow($('#flowList'));
   drawChartsWhenReady([
     ['#chCatBar', cv => drawBarChart(cv, byCat.map(x => x.cat.icon), byCat.map(x => x.total))],
     ['#chCatPie', cv => drawPieChart(cv, catItems)],
-    ['#chMonth',  cv => drawLineChart(cv, MONTHS, fillMonths(recs))],
+    ['#chMonth',  cv => drawLineChart(cv, trend.labels, trend.values)],
   ]);
 }
 
-/* —— 视图 B：全部明星合并年度统计 —— */
+/* —— 视图 B：全部明星合并统计（年度 / 全部年份） —— */
 function renderAllStats(body) {
-  const year = yearValue();
-  const recs = recsOfYear(year).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const all = isAllYears();
+  const recs = statsRecs().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const total = totalOf(recs);
 
   const byCatMap = {};
@@ -1052,10 +1078,11 @@ function renderAllStats(body) {
   if (orphan > 0) idolsWithTotal.push({ label: '无归属', value: orphan });
 
   const top5 = recs.slice().sort((a, b) => (b.price || 0) - (a.price || 0)).slice(0, 5);
+  const emptyTip = all ? '暂无账单' : '本年暂无账单';
 
   body.innerHTML = `
     <div class="stat-hero glass">
-      <div class="lbl">${year} 年 · 全部追星总支出</div>
+      <div class="lbl">${all ? '全部年份 · 累计追星总支出' : yearValue() + ' 年 · 全部追星总支出'}</div>
       <div class="big gold-grad num">${fmtMoney(total)}</div>
       <div class="lbl">共 ${recs.length} 条账单 · ${state.idols.length} 位明星</div>
     </div>
@@ -1063,15 +1090,15 @@ function renderAllStats(body) {
       <div id="pctList">${pctListHtml(catItems, total)}</div>
     </div>
     <div class="chart-card glass"><div class="chart-title">📊 消费大类总花费（柱状图）</div><canvas id="chCatBar" data-h="210"></canvas></div>
-    <div class="chart-card glass"><div class="chart-title">⭐ 各明星全年总开销对比</div><canvas id="chIdolBar" data-h="210"></canvas></div>
+    <div class="chart-card glass"><div class="chart-title">⭐ ${all ? '各明星总开销对比' : '各明星全年总开销对比'}</div><canvas id="chIdolBar" data-h="210"></canvas></div>
     <div class="chart-card glass"><div class="chart-title">🏆 Top 5 高额消费</div>
       <div id="top5List">${top5.length ? top5.map((r, i) => {
         const idol = idolById(r.idolId);
         return `<div class="top5-item" data-id="${r.id}"><div class="top5-name"><span class="rk num">${i + 1}</span>${esc(r.name)}<span class="who">${esc(idol ? idol.name : '无归属')}</span></div><div class="top5-amt num">${fmtMoney(r.price)}</div></div>`;
-      }).join('') : '<div class="empty" style="padding:20px"><div class="dd">本年暂无账单</div></div>'}</div>
+      }).join('') : `<div class="empty" style="padding:20px"><div class="dd">${emptyTip}</div></div>`}</div>
     </div>
-    <div class="chart-card glass"><div class="chart-title">🗒️ ${year} 年全部流水汇总（${recs.length}）</div>
-      <div id="flowList">${recs.length ? recs.slice(0, 300).map(r => recItemHtml(r)).join('') : '<div class="empty" style="padding:20px"><div class="dd">本年暂无账单</div></div>'}</div>
+    <div class="chart-card glass"><div class="chart-title">🗒️ ${all ? '全部年份' : yearValue() + ' 年'}流水汇总（${recs.length}）</div>
+      <div id="flowList">${recs.length ? recs.slice(0, 300).map(r => recItemHtml(r)).join('') : `<div class="empty" style="padding:20px"><div class="dd">${emptyTip}</div></div>`}</div>
     </div>`;
   bindFlow($('#flowList'));
   $$('#top5List .top5-item').forEach(el => el.addEventListener('click', () => openRecDetail(+el.dataset.id)));
