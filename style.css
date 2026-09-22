@@ -511,3 +511,55 @@ main { position:relative; z-index:1; max-width:560px; margin:0 auto; padding:16p
 .empty .tt { font-size:15px; font-weight:600; color:var(--accent2); }
 .empty .dd { font-size:12px; color:var(--dim); margin-top:6px; line-height:1.6; }
 .empty .btn { margin-top:16px; display:inline-block; flex:none; padding:10px 26px; }
+
+/* ══════════ 账号 · 云同步 ══════════ */
+.acct-card {
+  margin: 2px 0 14px;
+  padding: 14px;
+  border-radius: var(--r-card);
+  background: linear-gradient(160deg, rgba(123,97,255,.13), rgba(22,22,29,.6) 60%);
+  border: 1px solid var(--accent-border);
+}
+.acct-card:empty { display:none; }
+.acct-note { font-size:12px; color:var(--dim); line-height:1.65; margin-top:10px; text-align:center; }
+.acct-note b { color: var(--accent2); }
+.acct-user { display:flex; align-items:center; gap:12px; }
+.acct-avatar {
+  width:42px;height:42px;flex:none; border-radius:14px;
+  display:grid;place-items:center; font-size:17px; font-weight:700; color:#fff;
+  background: var(--accent-grad); box-shadow:0 4px 14px rgba(123,97,255,.35);
+}
+.acct-info { flex:1; min-width:0; }
+.acct-name { font-size:15px; font-weight:600; letter-spacing:.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.acct-sub { font-size:12px; color:var(--dim); margin-top:3px; }
+.acct-sub.err { color: var(--danger); }
+.acct-dot { width:8px;height:8px;flex:none;border-radius:50%;background:rgba(168,149,255,.35); }
+.acct-dot.on { background: var(--accent2); box-shadow:0 0 10px rgba(168,149,255,.9); animation: acctPulse 1.1s infinite ease-in-out; }
+@keyframes acctPulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.35;transform:scale(.82);} }
+.acct-acts { display:flex; gap:8px; margin-top:12px; }
+.acct-acts .btn { flex:1; padding:9px 0; font-size:13px; }
+
+/* ══════════ 登录 / 注册 ══════════ */
+.auth-title { font-size:19px; font-weight:700; text-align:center; letter-spacing:1px; }
+.auth-sub { font-size:12px; color:var(--dim); text-align:center; line-height:1.65; margin:8px 22px 16px; }
+.auth-seg {
+  display:flex; gap:6px; padding:4px; margin-bottom:18px;
+  background:rgba(123,97,255,.08); border:1px solid rgba(139,117,255,.22); border-radius:14px;
+}
+.auth-seg-btn {
+  flex:1; padding:9px 0; border:none; border-radius:11px; cursor:pointer;
+  background:transparent; color:var(--sub); font-size:13px; font-family:inherit;
+  transition: all .18s ease;
+}
+.auth-seg-btn.active { background: var(--accent-grad); color:#fff; font-weight:600; box-shadow:0 4px 16px rgba(123,97,255,.38); }
+.auth-tip { font-size:12px; color:var(--dim); line-height:1.6; margin:-4px 0 14px; }
+.auth-links { text-align:right; margin:-6px 0 14px; }
+.auth-qrow { display:flex; gap:8px; align-items:stretch; }
+.auth-qrow input { flex:1; min-width:0; }
+.auth-qrow .btn { flex:none; margin:0; height:auto; padding:0 16px; }
+.auth-err {
+  font-size:13px; color:var(--danger); line-height:1.6;
+  background:rgba(224,112,112,.08); border:1px solid rgba(224,112,112,.32);
+  border-radius:12px; padding:10px 12px; margin-bottom:12px; text-align:center;
+}
+.auth-foot { font-size:11px; color:var(--dim); text-align:center; line-height:1.6; margin-top:14px; }

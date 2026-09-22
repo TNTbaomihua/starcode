@@ -1,0 +1,13 @@
+{
+  "name": "star-expense",
+  "version": "2.0.0",
+  "private": true,
+  "description": "追星消费记账本 · PWA（本地优先 + 账号云同步）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

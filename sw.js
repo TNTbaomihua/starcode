@@ -1,10 +1,11 @@
-/* 追星消费记账本 · Service Worker（cache-first + 版本化更新） */
-const CACHE_VERSION = 'v20';
+/* 追星消费记账本 · Service Worker（网络优先导航 + 版本化更新） */
+const CACHE_VERSION = 'v21';
 const CACHE_NAME = 'star-expense-' + CACHE_VERSION;
 const CORE_ASSETS = [
   './',
   './index.html',
   './style.css',
+  './sync.js',
   './app.js',
   './manifest.json',
   './icons/icon-192.png',
@@ -29,6 +30,8 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
+  // 云同步接口必须实时联网，绝不进缓存
+  if (url.pathname.startsWith('/api/')) return;
   const isNav = e.request.mode === 'navigate' ||
     (e.request.destination === 'document') ||
     url.pathname.endsWith('.html') || url.pathname === '/' ||

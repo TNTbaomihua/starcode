@@ -72,15 +72,16 @@ async function dbAll(store) {
     req.onerror = () => reject(req.error);
   });
 }
+/* 新增：分配全局唯一 id（跨设备同步不撞车）+ 更新时间戳 */
 async function dbAdd(store, obj) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const req = db.transaction(store, 'readwrite').objectStore(store).add(obj);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  if (obj.id == null) obj.id = newGid();
+  obj.updatedAt = Date.now();
+  await dbPut(store, obj);
+  return obj.id;
 }
+/* 写入：自动刷新 updatedAt，供云同步判断新旧 */
 async function dbPut(store, obj) {
+  obj.updatedAt = Date.now();
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const req = db.transaction(store, 'readwrite').objectStore(store).put(obj);
@@ -112,6 +113,7 @@ const state = {
   catIconPick: '🎤',
   recImages: [],
   pendingDeleteIdolId: null,
+  authMode: 'login',
 };
 const CAT_ICONS = ['🎤','✈️','🏨','🎬','👕','📚','🎫','💿','📸','🎁','💄','👟','🧸','🍜','🚄','💻','✨','💖'];
 // 低饱和冷紫色系（图表 / 分类），适配深色背景
@@ -149,22 +151,48 @@ async function init() {
   }
   try {
     bindAll();
+    initAuthUI();
     renderAll();
+    renderAccountCard();
   } catch (e) { console.error(e); }
   initKeyboardFix();
+  syncInitVisibility();
+  // 探测云端服务 → 已登录则静默同步一次 → 新用户给一次注册引导
+  syncBootstrap().then(() => setTimeout(maybeGuideAuth, 600));
+}
+
+/* 新用户（本机没有账单、未登录、且没被引导过）时，主动提示注册。
+   注意：标记只在用户真正关掉这个弹窗后才写，避免被 SW 首次安装的自动刷新吞掉 */
+async function maybeGuideAuth() {
+  if (!SYNC.available || isLoggedIn()) return;
+  if (localStorage.getItem('se_auth_guided') === '1') return;
+  if (state.idols.length || state.records.length) return;
+  openAuthSheet('reg');
 }
 async function reloadData() {
-  [state.idols, state.records, state.categories] = await Promise.all([
+  const [idols, records, categories] = await Promise.all([
     dbAll('idols'), dbAll('records'), dbAll('categories'),
   ]);
-  state.idols.sort((a, b) => a.id - b.id);
+  // 已软删除（云端同步的墓碑）不进入界面
+  state.idols = (idols || []).filter(x => !x.deletedAt).sort((a, b) => a.id - b.id);
+  state.records = (records || []).filter(x => !x.deletedAt);
+  state.categories = (categories || []).filter(x => !x.deletedAt);
+  // 老数据补上时间戳，保证首次云同步时能被正确合并
+  backfillTimestamps(idols, records, categories);
+}
+/* 给 v20 及更早版本的历史数据补 updatedAt（不写盘，同步时按需生成） */
+function backfillTimestamps(idols, records, categories) {
+  const fix = (list) => (list || []).forEach(x => {
+    if (x && x.updatedAt == null) x.updatedAt = x.createdAt || 0;
+  });
+  fix(idols); fix(records); fix(categories);
 }
 function canonKey(name) {
   let k = String(name || '').replace(/（[^）]*）/g, '').replace(/[^0-9A-Za-z\u4e00-\u9fa5]/g, '');
   return CAT_ALIAS[k] || k;
 }
 
-async function ensureDefaultCats() {
+async function ensureDefaultCats(silent) {
   let changed = await mergeCatsToCanon();
   // 补齐缺失的标准分类
   const have = new Set(state.categories.map(c => canonKey(c.name)));
@@ -179,8 +207,8 @@ async function ensureDefaultCats() {
     changed = true;
   }
   if (changed) {
-    state.records = await dbAll('records');
-    toast('分类已整理 ✓');
+    await reloadData();
+    if (!silent) toast('分类已整理 ✓');
   }
 }
 
@@ -216,7 +244,7 @@ async function mergeCatsToCanon() {
         r.categoryId = keep.id;
         await dbPut('records', r);
       }
-      await dbDelete('categories', dup.id);
+      await dbPut('categories', { ...dup, deletedAt: Date.now() });
       state.categories = state.categories.filter(c => c.id !== dup.id);
       changed = true;
     }
@@ -419,6 +447,7 @@ function bindAll() {
   $('#settingsAvatarInput').addEventListener('change', onPickSettingsAvatar);
   $('#btnSaveProfile').addEventListener('click', saveProfile);
   $('#btnExport').addEventListener('click', exportData);
+  $('#btnImport').addEventListener('click', importData);
   $('#btnInstallGuide').addEventListener('click', () => showInstallGuide());
   $('#btnAbout').addEventListener('click', () => $('#aboutBackdrop').classList.remove('hidden'));
   $('#aboutOk').addEventListener('click', () => $('#aboutBackdrop').classList.add('hidden'));
@@ -470,7 +499,14 @@ function switchView(v) {
   window.scrollTo(0, 0);
 }
 function openSheet(bk) { bk.classList.add('open'); }
-function closeSheet(bk) { if (bk) bk.classList.remove('open'); }
+function closeSheet(bk) {
+  if (!bk) return;
+  // 用户主动关掉登录/注册引导 → 记下来，不再反复弹
+  if (bk.id === 'sheetAuthBackdrop' && typeof isLoggedIn === 'function' && !isLoggedIn()) {
+    localStorage.setItem('se_auth_guided', '1');
+  }
+  bk.classList.remove('open');
+}
 
 /* ────────────── 首页：明星档案 ────────────── */
 function renderHome() {
@@ -556,14 +592,15 @@ async function doDeleteIdol(cascade) {
   const idol = idolById(id);
   if (!idol) return;
   try {
+    const now = Date.now();
     if (cascade) {
-      // 级联删除：记录（含图片，图片存在记录内）一并删除
-      for (const r of recsOf(id)) await dbDelete('records', r.id);
+      // 级联删除：记录（含图片，图片存在记录内）一并打上删除标记
+      for (const r of recsOf(id)) await dbPut('records', { ...r, deletedAt: now });
     } else {
       // 保留记录 → 归为无归属（idolId 置空）
-      for (const r of recsOf(id)) { r.idolId = null; await dbPut('records', r); }
+      for (const r of recsOf(id)) await dbPut('records', { ...r, idolId: null });
     }
-    await dbDelete('idols', id);
+    await dbPut('idols', { ...idol, deletedAt: now });
     toast(cascade ? '已删除明星及其全部记录' : '已删除明星，记录保留为「无归属」');
     if (state.detailIdolId === id) {
       state.detailIdolId = null;
@@ -571,6 +608,7 @@ async function doDeleteIdol(cascade) {
     }
     if (state.statIdol === id) { state.statIdol = null; state.statMode = 'all'; }
     await reloadData(); renderAll();
+    scheduleSync();
     checkQuota();
   } catch (e) { console.error(e); toast('删除失败', true); }
 }
@@ -636,10 +674,11 @@ async function deleteCat(catId) {
     `确定删除分类「<b>${esc(c.name)}</b>」吗？<br>有 <b>${n}</b> 条账单使用该分类，删除后这些账单会显示为「其他」。`);
   if (!ok) return;
   try {
-    await dbDelete('categories', catId);
+    await dbPut('categories', { ...c, deletedAt: Date.now() });
     await reloadData(); renderAll();
     if (state.view === 'detail') renderDetail();
     renderCatManager();
+    scheduleSync();
     toast('已删除分类');
   } catch (e) { console.error(e); toast('删除失败', true); }
 }
@@ -804,6 +843,7 @@ async function saveRec() {
     await reloadData(); renderAll();
     if (state.view === 'detail') renderDetail();
     resetRecForm(idolId);
+    scheduleSync();
   } catch (e) {
     console.error(e);
     toast('保存失败：' + (e.message || '存储异常') + '（表单内容已保留，可重试）', true);
@@ -923,10 +963,11 @@ function openRecDetail(id) {
     const ok = await confirmDialog('删除账单', `确定删除「<b>${esc(r.name)}</b>」吗？<br>对应的图片凭证会一并删除。`);
     if (!ok) return;
     try {
-      await dbDelete('records', r.id);
+      await dbPut('records', { ...r, deletedAt: Date.now() });
       closeSheet($('#sheetRecDetailBackdrop'));
       await reloadData(); renderAll();
       if (state.view === 'detail') renderDetail();
+      scheduleSync();
       checkQuota();
       toast('已删除');
     } catch (e) { console.error(e); toast('删除失败', true); }
@@ -1320,6 +1361,283 @@ function exportData() {
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
     toast('已导出 ✓ 建议每月备份一次');
   } catch (e) { console.error(e); toast('导出失败', true); }
+}
+
+/* 从 JSON 备份导入：与本机数据合并（同 id 取更新时间较新的），不会覆盖或删掉本机更新过的数据 */
+function importData() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.setAttribute('data-import', '1');
+  input.addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    try {
+      await applyImport(JSON.parse(await f.text()));
+    } catch (err) {
+      console.error(err);
+      toast('导入失败：' + (err.message || '文件格式不正确'), true);
+    }
+  });
+  document.body.appendChild(input);
+  input.click();
+  setTimeout(() => input.remove(), 60000);
+}
+
+async function applyImport(json) {
+  const incoming = {
+    idols: Array.isArray(json.idols) ? json.idols : [],
+    records: Array.isArray(json.records) ? json.records : [],
+    categories: Array.isArray(json.categories) ? json.categories : [],
+    profile: (json.profile && typeof json.profile === 'object') ? json.profile : {},
+  };
+  if (!incoming.idols.length && !incoming.records.length && !incoming.categories.length)
+    throw new Error('这个文件里没有可导入的数据');
+
+  const ok = await confirmDialog('导入备份',
+    `将合并 <b>${incoming.idols.length}</b> 位明星、<b>${incoming.records.length}</b> 条账单、` +
+    `<b>${incoming.categories.length}</b> 个分类。<br><br>` +
+    `同一份数据以时间较新的为准，本机已有的账单不会被删除。`, '开始导入');
+  if (!ok) return false;
+
+  const merged = mergeDataset(await collectLocal(), incoming);
+  await applyDataset(merged);
+  await reloadData();
+  await ensureDefaultCats(true);
+  renderAll();
+  closeSheet($('#sheetSettingsBackdrop'));
+  toast(`导入完成 ✓ 现有 ${state.records.length} 条账单`);
+  if (isLoggedIn()) scheduleSync(800);
+  return true;
+}
+
+/* ═══════════════ 账号：注册 / 登录 / 云同步 ═══════════════ */
+const AUTH_MODES = {
+  login: { title: '登录账号', sub: '登录后自动把云端账本同步到本机，换手机也能接着记', submit: '登录' },
+  reg:   { title: '注册新账号', sub: '注册后本机账本会自动备份到云端，新手机登录即可恢复', submit: '注册并备份' },
+  reset: { title: '找回密码', sub: '通过注册时设置的密保问题重置密码', submit: '重置密码' },
+  pwd:   { title: '修改密码', sub: '修改后其他设备需要用新密码重新登录', submit: '保存新密码' },
+};
+
+const authFieldText = (id, label, ph, ac) =>
+  `<label class="field"><span class="field-label">${label}</span><input type="text" id="${id}" placeholder="${ph}" maxlength="60"${ac ? ` autocomplete="${ac}"` : ''}></label>`;
+const authFieldPwd = (id, label, ph) =>
+  `<label class="field"><span class="field-label">${label}</span><input type="password" id="${id}" placeholder="${ph}" maxlength="32" autocomplete="off"></label>`;
+
+function timeAgo(ts) {
+  const d = Date.now() - ts;
+  if (d < 60000) return '刚刚同步';
+  if (d < 3600000) return Math.floor(d / 60000) + ' 分钟前同步';
+  if (d < 86400000) return Math.floor(d / 3600000) + ' 小时前同步';
+  return new Date(ts).toLocaleDateString('zh-CN') + ' 同步';
+}
+
+/* —— 设置面板里的账号卡片 —— */
+function renderAccountCard() {
+  const el = $('#acctCard');
+  if (!el) return;
+  if (!SYNC.available) {
+    el.innerHTML =
+      `<div class="acct-note">当前为<b>离线版</b>（未连接云端服务）<br>数据只保存在这台设备上，换手机请用「导出数据」迁移</div>`;
+    return;
+  }
+  if (!isLoggedIn()) {
+    el.innerHTML =
+      `<button class="btn gold block" id="acctGoLogin">🔐 注册 / 登录账号</button>
+       <div class="acct-note">登录后账本自动备份到云端，<b>换新手机登录即可恢复全部数据</b></div>`;
+    return;
+  }
+  let sub;
+  if (SYNC.busy) sub = '正在同步…';
+  else if (SYNC.lastError) sub = '同步失败：' + esc(SYNC.lastError);
+  else if (SYNC.lastSyncAt) sub = timeAgo(SYNC.lastSyncAt) + ' · 云端已是最新';
+  else sub = '已登录';
+  el.innerHTML = `
+    <div class="acct-user">
+      <div class="acct-avatar">${esc((SYNC.username || '?').slice(0, 1).toUpperCase())}</div>
+      <div class="acct-info">
+        <div class="acct-name">${esc(SYNC.username)}</div>
+        <div class="acct-sub${SYNC.lastError ? ' err' : ''}">${sub}</div>
+      </div>
+      <div class="acct-dot${SYNC.busy ? ' on' : ''}"></div>
+    </div>
+    <div class="acct-acts">
+      <button class="btn ghost sm" id="acctSyncNow">立即同步</button>
+      <button class="btn ghost sm" id="acctPwd">改密码</button>
+      <button class="btn ghost sm" id="acctOut">退出登录</button>
+    </div>`;
+}
+
+function initAuthUI() {
+  $('#authSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('.auth-seg-btn');
+    if (b) renderAuthForm(b.dataset.mode);
+  });
+  $('#authSubmit').addEventListener('click', submitAuth);
+  $('#authFields').addEventListener('click', (e) => {
+    if (e.target.closest('#authForgot')) renderAuthForm('reset');
+    if (e.target.closest('#authLoadQ')) loadSecurityQuestion();
+  });
+  $('#authFields').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitAuth(); }
+  });
+  $('#acctCard').addEventListener('click', (e) => {
+    if (e.target.closest('#acctGoLogin')) openAuthSheet('login');
+    if (e.target.closest('#acctSyncNow')) doManualSync();
+    if (e.target.closest('#acctPwd')) openAuthSheet('pwd');
+    if (e.target.closest('#acctOut')) confirmLogout();
+  });
+}
+
+function openAuthSheet(mode) {
+  if (!SYNC.available) {
+    toast('当前是离线版，暂不支持账号功能', true);
+    return;
+  }
+  renderAuthForm(mode || 'login');
+  openSheet($('#sheetAuthBackdrop'));
+  setTimeout(() => { const u = $('#authUser'); if (u) u.focus(); }, 360);
+}
+
+function renderAuthForm(mode) {
+  if (!AUTH_MODES[mode]) mode = 'login';
+  state.authMode = mode;
+  const m = AUTH_MODES[mode];
+  $('#authTitle').textContent = m.title;
+  $('#authSub').textContent = m.sub;
+  $$('#authSeg .auth-seg-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+    b.classList.toggle('hidden', (b.dataset.mode === 'reset' || b.dataset.mode === 'pwd') && b.dataset.mode !== mode);
+  });
+  $('#authSubmit').textContent = m.submit;
+  authErr('');
+
+  const f = $('#authFields');
+  if (mode === 'login') {
+    f.innerHTML =
+      authFieldText('authUser', '用户名', '注册时设置的用户名', 'username') +
+      authFieldPwd('authPwd', '密码', '至少 6 位') +
+      `<div class="auth-links"><button class="link-btn" id="authForgot">忘记密码？</button></div>`;
+  } else if (mode === 'reg') {
+    f.innerHTML =
+      authFieldText('authUser', '用户名', '3~20 位，中文 / 字母 / 数字', 'username') +
+      authFieldPwd('authPwd', '密码', '至少 6 位') +
+      authFieldPwd('authPwd2', '确认密码', '再输一次') +
+      authFieldText('authQ', '密保问题（选填）', '如：我的小学班主任姓什么') +
+      authFieldText('authA', '密保答案（选填）', '忘记密码时用来验证身份') +
+      `<div class="auth-tip">💡 建议填写密保问题，忘记密码时可以自助找回</div>`;
+  } else if (mode === 'reset') {
+    f.innerHTML =
+      authFieldText('authUser', '用户名', '注册时用的用户名', 'username') +
+      `<label class="field"><span class="field-label">密保问题</span>
+        <div class="auth-qrow">
+          <input type="text" id="authQShow" readonly placeholder="填写用户名后点「获取」">
+          <button class="btn ghost sm" type="button" id="authLoadQ">获取</button>
+        </div></label>` +
+      authFieldText('authA', '密保答案', '答案不区分大小写') +
+      authFieldPwd('authPwd', '新密码', '至少 6 位');
+  } else {
+    f.innerHTML =
+      authFieldPwd('authOldPwd', '原密码', '当前使用的密码') +
+      authFieldPwd('authPwd', '新密码', '至少 6 位');
+  }
+}
+
+function authErr(msg) {
+  const el = $('#authErr');
+  if (!el) return;
+  if (!msg) { el.classList.add('hidden'); el.textContent = ''; return; }
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+async function loadSecurityQuestion() {
+  const u = ($('#authUser').value || '').trim();
+  if (!u) return authErr('请先填写用户名');
+  const btn = $('#authLoadQ');
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    $('#authQShow').value = await fetchSecurityQuestion(u);
+    authErr('');
+  } catch (e) {
+    $('#authQShow').value = '';
+    authErr(e.message || '获取失败');
+  } finally {
+    btn.disabled = false; btn.textContent = '获取';
+  }
+}
+
+async function submitAuth() {
+  const mode = state.authMode;
+  const btn = $('#authSubmit');
+  if (!btn || btn.disabled) return;
+  authErr('');
+  const val = (id) => { const el = $('#' + id); return el ? el.value : ''; };
+  const username = val('authUser').trim();
+  const pwd = val('authPwd');
+
+  try {
+    if (mode === 'login' || mode === 'reg') {
+      if (!username) throw new Error('请填写用户名');
+      if (pwd.length < 6) throw new Error('密码至少 6 位');
+      if (mode === 'reg') {
+        if (val('authPwd2') !== pwd) throw new Error('两次输入的密码不一样');
+        if (val('authQ').trim() && !val('authA').trim()) throw new Error('填了密保问题就要填答案哦');
+      }
+    } else if (mode === 'reset') {
+      if (!username) throw new Error('请填写用户名');
+      if (!val('authA').trim()) throw new Error('请填写密保答案');
+      if (pwd.length < 6) throw new Error('新密码至少 6 位');
+    } else {
+      if (!val('authOldPwd')) throw new Error('请填写原密码');
+      if (pwd.length < 6) throw new Error('新密码至少 6 位');
+    }
+  } catch (e) { return authErr(e.message); }
+
+  btn.disabled = true;
+  btn.textContent = '处理中…';
+  try {
+    if (mode === 'reg') {
+      await doRegister(username, pwd, val('authQ').trim(), val('authA').trim());
+      closeSheet($('#sheetAuthBackdrop'));
+      toast('注册成功，账本已备份到云端 ✨');
+    } else if (mode === 'login') {
+      await doLogin(username, pwd);
+      closeSheet($('#sheetAuthBackdrop'));
+      toast('登录成功，云端账本已同步到本机 ✓');
+    } else if (mode === 'reset') {
+      await doResetPassword(username, val('authA').trim(), pwd);
+      renderAuthForm('login');
+      toast('密码已重置，请用新密码登录 ✓');
+    } else {
+      await doChangePassword(val('authOldPwd'), pwd);
+      closeSheet($('#sheetAuthBackdrop'));
+      toast('密码已修改 ✓');
+    }
+    renderAccountCard();
+  } catch (e) {
+    authErr(e.message || '操作失败，请稍后再试');
+  } finally {
+    const b = $('#authSubmit');
+    if (b) { b.disabled = false; b.textContent = AUTH_MODES[state.authMode].submit; }
+  }
+}
+
+async function doManualSync() {
+  if (!isLoggedIn()) return openAuthSheet('login');
+  if (SYNC.busy) return toast('正在同步中…');
+  toast('正在同步…');
+  const r = await syncNow({ quiet: false });
+  if (r.ok) toast('同步完成 ✓ 云端已是最新');
+  else if (!r.skipped) toast('同步失败：' + r.error, true);
+}
+
+async function confirmLogout() {
+  const ok = await confirmDialog('退出登录',
+    '退出后<b>本机数据仍然保留</b>，云端备份也不会删除。<br>下次登录会继续同步。', '退出登录');
+  if (!ok) return;
+  await doLogout();
+  renderAccountCard();
 }
 
 /* ═══════════════ PWA 安装 ═══════════════ */
